@@ -1,24 +1,36 @@
 name: poll-instagram
-# Calls the Instagram reply bot poller (~every minute). GitHub runs the schedule every 5 min
-# (sometimes later); each run polls 5 times with 55 s pauses.
+# One long job polls every minute for ~5h40m, then starts the next run itself.
+# The schedule only restarts the chain if it ever breaks (GitHub cron is unreliable).
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  schedule: [ { cron: "*/30 * * * *" } ]
   workflow_dispatch:
-concurrency:
-  group: poll
-  cancel-in-progress: false
+concurrency: { group: poll, cancel-in-progress: false }
+permissions: { actions: write, contents: write }
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 350
     steps:
-      - name: Poll
-        env:
-          TOKEN: ${{ secrets.POLL_TOKEN }}
+      - name: Poll every minute
+        env: { TOKEN: "${{ secrets.POLL_TOKEN }}" }
         run: |
-          for i in 1 2 3 4 5; do
-            curl -s -o /dev/null -w "poll $i: %{http_code}\n" --max-time 70 \
+          end=$(( $(date +%s) + 340*60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            curl -s -o /dev/null -w "$(date -u +%H:%M) poll: %{http_code}\n" --max-time 70 \
               -H "x-admin-token: $TOKEN" https://ig-reply-bot-one.vercel.app/api/poll || true
-            if [ "$i" -lt 5 ]; then sleep 55; fi
+            sleep 60
           done
+      - uses: actions/checkout@v4
+        if: always()
+      - name: Keep repo active (GitHub disables workflows after 60 idle days)
+        if: always()
+        run: |
+          last=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - last )) -gt $(( 30*86400 )) ]; then
+            git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+            date -u > .keepalive && git add .keepalive && git commit -m "keepalive" && git push
+          fi
+      - name: Start next run
+        if: always()
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh workflow run poll.yml -R "${{ github.repository }}" --ref main
