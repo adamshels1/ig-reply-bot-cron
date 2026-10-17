@@ -20,5 +20,5 @@ jobs:
           for i in 1 2 3 4 5; do
             curl -s -o /dev/null -w "poll $i: %{http_code}\n" --max-time 70 \
               -H "x-admin-token: $TOKEN" https://ig-reply-bot-one.vercel.app/api/poll || true
-            [ "$i" -lt 5 ] && sleep 55
+            if [ "$i" -lt 5 ]; then sleep 55; fi
           done
